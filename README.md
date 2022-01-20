@@ -1,1 +1,2 @@
-# web-3-wallet-connectors
+# web-3-wallet-provider
+
