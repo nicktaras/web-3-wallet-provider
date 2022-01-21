@@ -2,93 +2,104 @@ import WalletConnectProvider from "@walletconnect/web3-provider";
 import Fortmatic from 'fortmatic';
 import Portis from '@portis/web3';
 import Web3 from 'web3';
+import { ethers } from "ethers";
 import Torus from "@toruslabs/torus-embed";
 import Authereum from 'authereum';
 
 // walletAddressProvider is designed to collect a stateful list of user 
 // owned addressess from multiple networks.
 
-const networks = {
-    1: {
-        chainName: "Ethereum",
-    },
-    3: {
-        chainName: "Ropsten",
-    },
-    4: {
-        chainName: "Rinkeby",
-    },
-    5: {
-        chainName: "Goerli",
-    },
-    42: {
-        chainName: "Kovan",
-    },
-    85: {
-        chainName: "Polygon",
-    },
-    80001: {
-        chainName: "Mumbai",
-    },
-}
+class Web3WalletProvider {
 
-const walletAddressProvider = {
+    state: any;
+    registeredWalletProviders:any;
+    networks: any;
 
-    // @ts-ignore
-    state: { addresses: [ /* { address, chainName, networkId } */ ] },
+    constructor() {
 
-    // @ts-ignore
-    registeredWalletProviders: {},
-
-    // Event hook of new addresses added to the module
-    onUpdate() {
-
-        return this.state;
-
-    },
-
-    connect ( walletType: string) {
-
-        this[walletType]();
-
-    },
-
-    registerNewWalletProvider ( walletType: any, walletProvierInstance:any ) {
-
-        this.registeredWalletProviders[walletType] = { instance: walletProvierInstance };
-
-    },
-    
-    unRegisterWalletProvider ( walletType: any ) {
-
-        delete this.registeredWalletProviders[walletType];
-
-    },
-
-    registerNewWalletAddress ( address:string, chainId:string ) {
+        this.networks = {
+            1: {
+                chainName: "Ethereum",
+            },
+            3: {
+                chainName: "Ropsten",
+            },
+            4: {
+                chainName: "Rinkeby",
+            },
+            5: {
+                chainName: "Goerli",
+            },
+            42: {
+                chainName: "Kovan",
+            },
+            85: {
+                chainName: "Polygon",
+            },
+            80001: {
+                chainName: "Mumbai",
+            },
+        }
 
         // @ts-ignore
-        const chainName = networks[chainId].chainName;
+        this.state = { addresses: [ /* { address, chainName, chainId, provider } */ ] };
+
+        // @ts-ignore
+        this.registeredWalletProviders = {};
         
-        this.state.addresses.push({ address, chainName, chainId });
+    }
 
-        this.onUpdate();
+    connectWith ( walletType: string ) {
 
-    },
+        if(!walletType) throw new Error('Please provide a Wallet type to connect with.');
+
+        // @ts-ignore
+        if(this[walletType]) this[walletType]();
+        else throw new Error('Wallet type not found');
+
+    };
+
+    async signWith ( message: string, walletData: any ) {
+
+        // @ts-ignore
+        let provider = new ethers.providers.Web3Provider(walletData.provider);
+  
+        let signer = provider.getSigner();
+  
+        return await signer.signMessage(message);
+
+    }
+
+    getConnectedWalletData () {
+
+        return this.state.addresses;
+
+    }
+
+    registerNewWalletAddress ( address:string, chainId:string, provider:any ) {
+
+        // @ts-ignore
+        const chainName = this.networks[chainId].chainName;
+        
+        this.state.addresses.push({ address, chainName, chainId, provider });
+
+        return this.state.addresses;
+
+    };
 
     async getWeb3ChainId ( web3: any) {
 
         // @ts-ignore
         return web3.eth.getChainId();
 
-    },
+    };
 
     async getWeb3Accounts( web3: any ) {
 
         // @ts-ignore
         return web3.eth.getAccounts();
 
-    },
+    };
 
     async getWeb3ChainIdAndAccounts( web3: any ) {
 
@@ -98,7 +109,7 @@ const walletAddressProvider = {
 
         return { chainId, accounts };
 
-    },
+    };
 
     async MetaMask () {
 
@@ -106,6 +117,9 @@ const walletAddressProvider = {
       
         // @ts-ignore
         if (typeof window.ethereum !== 'undefined') {
+
+            //@ts-ignore
+            // await ethereum.enable(); // fall back may be needed for FF to open Extension Prompt.
             
             // @ts-ignore
             const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
@@ -115,59 +129,57 @@ const walletAddressProvider = {
 
             const accountAddress = accounts[0];
 
-            this.registerNewWalletAddress(accountAddress, parseInt(hexChainId, 16));
+            // @ts-ignore
+            const registeredWalletAddress = this.registerNewWalletAddress(accountAddress, parseInt(hexChainId, 16), ethereum);
+
+            return registeredWalletAddress;
+
+        } else {
+
+            throw new Error("MetaMask is not available. Please check the extension is supported and active.");
 
         }
         
-    },
+    };
 
     async WalletConnect () {
 
         console.log('connect Wallet Connect');
 
         //  Create WalletConnect Provider
-        this.provider = new WalletConnectProvider({
+        const walletConnectProvider = new WalletConnectProvider({
             infuraId: "7753fa7b79d2469f97c156780fce37ac",
         });
         
         // Subscribe to accounts change
-        this.provider.on("accountsChanged", (accounts: string[]) => {
+        walletConnectProvider.on("accountsChanged", (accounts: string[]) => {
 
             console.log(accounts);
 
-            if (this.WalletConnectChainId) {
+            const registeredWalletAddress = this.registerNewWalletAddress(accounts[0], '1', walletConnectProvider);
 
-                this.registerNewWalletAddress(accounts[0], this.WalletConnectChainId);
+            return registeredWalletAddress;
                 
-            }
-
         });
             
         // Subscribe to chainId change
-        this.provider.on("chainChanged", (chainId: number) => {
+        walletConnectProvider.on("chainChanged", (chainId: number) => {
 
             console.log(chainId);
-
-            this.WalletConnectChainId = chainId;
 
         });
         
         // Subscribe to session disconnection
-        this.provider.on("disconnect", (code: number, reason: string) => {
+        walletConnectProvider.on("disconnect", (code: number, reason: string) => {
 
             console.log(code, reason);
-
-            this.unRegisterWalletProvider("WalletConnect");
 
         });
         
         //  Enable session (triggers QR Code modal)
-        this.provider.enable();
+        walletConnectProvider.enable();
 
-        // register reference to provider
-        this.registerNewWalletProvider( "WalletConnect", this.provider );
-
-    },
+    };
 
     async Fortmatic () {
 
@@ -175,18 +187,22 @@ const walletAddressProvider = {
 
         // https://replit.com/@fortmatic/demo-kitchen-sink
 
-        const fm = new Fortmatic('pk_test_96DF5BB9127A2C79');
+        // const fm = new Fortmatic('pk_test_96DF5BB9127A2C79');
+
+        const fm = new Fortmatic('pk_live_7F5E8827DC55A364');
         
+        const fortmaticProvider = fm.getProvider();
+
         // @ts-ignore
-        const web3 = new Web3(fm.getProvider());
+        const web3 = new Web3(fortmaticProvider);
 
         const { accounts, chainId } = await this.getWeb3ChainIdAndAccounts( web3 );
 
-        this.registerNewWalletAddress(accounts[0], chainId);
+        const registeredWalletAddress = this.registerNewWalletAddress(accounts[0], chainId, fortmaticProvider);
 
-        this.registerNewWalletProvider( "Fortmatic", web3 );
+        return registeredWalletAddress;
 
-    },
+    };
 
     async Torus () {
 
@@ -203,11 +219,11 @@ const walletAddressProvider = {
 
         const { accounts, chainId } = await this.getWeb3ChainIdAndAccounts( web3 );
 
-        this.registerNewWalletAddress(accounts[0], chainId);
+        const registeredWalletAddress = this.registerNewWalletAddress(accounts[0], chainId, torus.provider);
 
-        this.registerNewWalletProvider( "Fortmatic", web3 );
+        return registeredWalletAddress;
 
-    },
+    };
 
     async Portis () {
 
@@ -223,11 +239,11 @@ const walletAddressProvider = {
 
         const { accounts, chainId } = await this.getWeb3ChainIdAndAccounts( web3 );
 
-        this.registerNewWalletAddress(accounts[0], chainId);
+        const registeredWalletAddress = this.registerNewWalletAddress(accounts[0], chainId, portis.provider);
 
-        this.registerNewWalletProvider( "Fortmatic", web3 );
-
-    },
+        return registeredWalletAddress;
+        
+    };
 
     async Authereum  () {
 
@@ -235,26 +251,35 @@ const walletAddressProvider = {
 
         const authereum = new Authereum('kovan');
 
-        const provider = authereum.getProvider();
+        const authereumProvider = authereum.getProvider();
 
-        const web3 = new Web3(provider);
+        const web3 = new Web3(authereumProvider);
 
-        await provider.enable();
-
-        // register reference to provider
-        this.registerNewWalletProvider( "Authereum", this.provider );
+        await authereumProvider.enable();
 
         const { accounts, chainId } = await this.getWeb3ChainIdAndAccounts( web3 );
 
-        this.registerNewWalletAddress(accounts[0], chainId);
+        const registeredWalletAddress = this.registerNewWalletAddress(accounts[0], chainId, authereumProvider);
 
-    },
+        return registeredWalletAddress;
+
+    };
 
 }
 
-// walletAddressProvider.connect('WalletConnect');
-// walletAddressProvider.connect('Fortmatic');
-// walletAddressProvider.connect('Portis');
-// walletAddressProvider.connect('Torus');
-// walletAddressProvider.connect('Authereum');
-// walletAddressProvider.connect('MetaMask');
+export default Web3WalletProvider;
+
+//@ts-ignore
+// window.web3WalletProvider = new Web3WalletProvider();
+// @ts-ignore
+// window.web3WalletProvider.connectWith('WalletConnect');
+// @ts-ignore
+// window.web3WalletProvider.signWith("msg", window.web3WalletProvider.getConnectedWalletData()[0]);
+
+// examples for each type
+// walletAddressProvider.connectWith('WalletConnect');
+// walletAddressProvider.connectWith('Fortmatic'); (works)
+// walletAddressProvider.connectWith('Portis'); (works)
+// walletAddressProvider.connectWith('Torus'); (works)
+// walletAddressProvider.connectWith('Authereum');
+// walletAddressProvider.connectWith('MetaMask'); (works)
